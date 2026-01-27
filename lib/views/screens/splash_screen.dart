@@ -1,68 +1,83 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../widgets/gradient_background.dart';
+import 'package:go_router/go_router.dart';
 import '../../utils/app_colors.dart';
+import '../../services/storage_service.dart';
 
-class SplashScreen extends ConsumerStatefulWidget {
+class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
   @override
-  ConsumerState<SplashScreen> createState() => _SplashScreenState();
+  State<SplashScreen> createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends ConsumerState<SplashScreen> {
- 
+class _SplashScreenState extends State<SplashScreen> {
+  final _storageService = StorageService();
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthAndNavigate();
+  }
+
+  Future<void> _checkAuthAndNavigate() async {
+    // Wait for 2 seconds
+    await Future.delayed(const Duration(seconds: 2));
+    
+    if (!mounted) return;
+    
+    // Check if user has token and is logged in
+    final token = await _storageService.getToken();
+    final isLoggedIn = await _storageService.isLoggedIn();
+    
+    debugPrint('🔍 Splash Screen - Auth Check:');
+    debugPrint('   Token: ${token != null ? "Exists" : "Not found"}');
+    debugPrint('   Is Logged In: $isLoggedIn');
+    
+    if (mounted) {
+      if (token != null && token.isNotEmpty && isLoggedIn) {
+        // User is authenticated, go to home screen
+        debugPrint('✅ User authenticated - Navigating to home screen');
+        context.go('/home');
+      } else {
+        // User is not authenticated, go to login screen
+        debugPrint('❌ User not authenticated - Navigating to login screen');
+        context.go('/onboarding');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: GradientBackground(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Logo
-              Image.asset(
-                'assets/images/app_logo.png',
-                width: 120,
-                height: 120,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(
-                        colors: [AppColors.primaryBlue, AppColors.accentBlue],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
+      body: Stack(
+        children: [
+          // Background Image
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images/splash_screen.png',
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                // Fallback to gradient background if image not found
+                return Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        AppColors.backgroundGradientStart,
+                        AppColors.backgroundGradientEnd,
+                      ],
                     ),
-                    child: const Icon(
-                      Icons.shield,
-                      color: Colors.white,
-                      size: 60,
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 20),
-              // App Name
-              const Text(
-                "INSPECTOR'S PATH",
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryBlue,
-                  letterSpacing: 1.5,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
+                  ),
+                );
+              },
+            ),
           ),
-        ),
+          
+  
+      
+      
+        ],
       ),
     );
   }

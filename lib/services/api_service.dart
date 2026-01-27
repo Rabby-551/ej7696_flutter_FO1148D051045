@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/api_response.dart';
 import '../models/auth_response.dart';
 import '../models/otp_response.dart';
 import '../utils/app_constants.dart';
+import '../utils/api_endpoints.dart';
 import 'storage_service.dart';
 
 class ApiService {
@@ -32,10 +35,32 @@ class ApiService {
           .timeout(AppConstants.apiTimeout);
 
       return _handleResponse<T>(response, fromJson);
-    } catch (e) {
+    } on SocketException catch (e) {
+      debugPrint('❌ HTTP GET Error - SocketException:');
+      debugPrint('   Error: $e');
+      
+      String errorMessage = 'Cannot connect to server. Please check:\n'
+          '• Server is running\n'
+          '• Network connection\n'
+          '• Server address: ${AppConstants.baseUrl}';
+      
       return ApiResponse<T>(
         success: false,
-        message: 'Network error: ${e.toString()}',
+        message: errorMessage,
+      );
+    } catch (e) {
+      String errorMessage = 'Network error occurred';
+      if (e.toString().contains('Connection refused')) {
+        errorMessage = 'Connection refused. Server may be down or unreachable at ${AppConstants.baseUrl}';
+      } else if (e.toString().contains('timeout')) {
+        errorMessage = 'Request timeout. Please check your connection and try again.';
+      } else {
+        errorMessage = 'Network error: ${e.toString()}';
+      }
+      
+      return ApiResponse<T>(
+        success: false,
+        message: errorMessage,
       );
     }
   }
@@ -47,20 +72,68 @@ class ApiService {
   }) async {
     try {
       final uri = Uri.parse('${AppConstants.baseUrl}$endpoint');
+      final headers = await _getHeaders();
+      final bodyJson = body != null ? jsonEncode(body) : null;
+      
+      debugPrint('📡 HTTP POST Request:');
+      debugPrint('   URL: $uri');
+      debugPrint('   Headers: $headers');
+      debugPrint('   Body: $bodyJson');
       
       final response = await http
           .post(
             uri,
-            headers: await _getHeaders(),
-            body: body != null ? jsonEncode(body) : null,
+            headers: headers,
+            body: bodyJson,
           )
           .timeout(AppConstants.apiTimeout);
 
+      debugPrint('📡 HTTP POST Response:');
+      debugPrint('   Status Code: ${response.statusCode}');
+      debugPrint('   Response Body: ${response.body}');
+      debugPrint('   Response Headers: ${response.headers}');
+
       return _handleResponse<T>(response, fromJson);
-    } catch (e) {
+    } on SocketException catch (e) {
+      debugPrint('❌ HTTP POST Error - SocketException:');
+      debugPrint('   Error: $e');
+      debugPrint('   Address: ${e.address}');
+      debugPrint('   Port: ${e.port}');
+      
+      String errorMessage = 'Cannot connect to server. Please check:\n'
+          '• Server is running\n'
+          '• Network connection\n'
+          '• Server address: ${AppConstants.baseUrl}';
+      
       return ApiResponse<T>(
         success: false,
-        message: 'Network error: ${e.toString()}',
+        message: errorMessage,
+      );
+    } on HttpException catch (e) {
+      debugPrint('❌ HTTP POST Error - HttpException:');
+      debugPrint('   Error: $e');
+      
+      return ApiResponse<T>(
+        success: false,
+        message: 'HTTP error: ${e.message}',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('❌ HTTP POST Error:');
+      debugPrint('   Error: $e');
+      debugPrint('   Stack Trace: $stackTrace');
+      
+      String errorMessage = 'Network error occurred';
+      if (e.toString().contains('Connection refused')) {
+        errorMessage = 'Connection refused. Server may be down or unreachable at ${AppConstants.baseUrl}';
+      } else if (e.toString().contains('timeout')) {
+        errorMessage = 'Request timeout. Please check your connection and try again.';
+      } else {
+        errorMessage = 'Network error: ${e.toString()}';
+      }
+      
+      return ApiResponse<T>(
+        success: false,
+        message: errorMessage,
       );
     }
   }
@@ -117,22 +190,58 @@ class ApiService {
     try {
       final jsonData = jsonDecode(response.body);
       
-      if (response.statusCode >= 200 && response.statusCode < 300) {
+      debugPrint('🔍 Parsing Response:');
+      debugPrint('   Status Code: ${response.statusCode}');
+      debugPrint('   Response Structure: $jsonData');
+      
+      // Handle response structure: {success: true, message: "...", data: {...}}
+      final success = jsonData['success'] ?? (response.statusCode >= 200 && response.statusCode < 300);
+      final message = jsonData['message'] is String 
+          ? jsonData['message'] 
+          : jsonData['message']?.toString() ?? 'Request completed';
+      final responseData = jsonData['data'];
+      
+      if (success) {
+        T? parsedData;
+        if (responseData != null && fromJson != null) {
+          try {
+            // Ensure responseData is a Map before passing to fromJson
+            if (responseData is Map<String, dynamic>) {
+              parsedData = fromJson(responseData);
+            } else {
+              debugPrint('⚠️ Response data is not a Map: ${responseData.runtimeType}');
+              parsedData = fromJson(responseData);
+            }
+          } catch (e, stackTrace) {
+            debugPrint('❌ Error parsing data with fromJson:');
+            debugPrint('   Error: $e');
+            debugPrint('   Stack Trace: $stackTrace');
+            debugPrint('   Response Data: $responseData');
+            // Return success but without parsed data
+            parsedData = null;
+          }
+        } else {
+          parsedData = responseData as T?;
+        }
+        
         return ApiResponse<T>(
           success: true,
-          message: jsonData['message'],
-          data: jsonData['data'] != null && fromJson != null
-              ? fromJson(jsonData['data'])
-              : jsonData['data'] as T?,
+          message: message,
+          data: parsedData,
         );
       } else {
         return ApiResponse<T>(
           success: false,
-          message: jsonData['message'] ?? 'Request failed',
+          message: message,
           error: jsonData['error'],
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrint('❌ Error in _handleResponse:');
+      debugPrint('   Error: $e');
+      debugPrint('   Stack Trace: $stackTrace');
+      debugPrint('   Response Body: ${response.body}');
+      
       return ApiResponse<T>(
         success: false,
         message: 'Failed to parse response: ${e.toString()}',
@@ -156,23 +265,44 @@ class ApiService {
       'confirmPassword': confirmPassword,
     };
 
+    // Convert to JSON string to show exact format
+    final bodyJson = jsonEncode(body);
+    
+    debugPrint('🌐 API Service - Register Request:');
+    debugPrint('   Endpoint: ${AppConstants.baseUrl}${ApiEndpoints.register}');
+    debugPrint('   Method: POST');
+    debugPrint('   Content-Type: application/json');
+    debugPrint('   Body (JSON): $bodyJson');
+    debugPrint('   Body (Map): $body');
+
     final response = await post<AuthResponse>(
-      '/auth/register',
+      ApiEndpoints.register,
       body: body,
       fromJson: (json) => AuthResponse.fromJson(json),
     );
 
+    debugPrint('🌐 API Service - Register Response:');
+    debugPrint('   Success: ${response.success}');
+    debugPrint('   Message: ${response.message}');
+    debugPrint('   Has Data: ${response.data != null}');
+
     // Store tokens if registration is successful
     if (response.success && response.data != null) {
+      debugPrint('💾 Storing authentication tokens...');
       if (response.data!.accessToken != null) {
         await _storageService.saveToken(response.data!.accessToken!);
+        debugPrint('   ✅ Access token saved');
       }
       if (response.data!.refreshToken != null) {
         await _storageService.saveRefreshToken(response.data!.refreshToken!);
+        debugPrint('   ✅ Refresh token saved');
       }
       if (response.data!.userId != null) {
         await _storageService.saveUserId(response.data!.userId!);
+        debugPrint('   ✅ User ID saved');
       }
+    } else {
+      debugPrint('❌ Registration failed - tokens not stored');
     }
 
     return response;
@@ -186,11 +316,28 @@ class ApiService {
       'email': email,
     };
 
-    return await post<OtpResponse>(
-      '/auth/forget',
+    // Convert to JSON string to show exact format
+    final bodyJson = jsonEncode(body);
+    
+    debugPrint('🌐 API Service - Forgot Password Request:');
+    debugPrint('   Endpoint: ${AppConstants.baseUrl}${ApiEndpoints.forgetPassword}');
+    debugPrint('   Method: POST');
+    debugPrint('   Content-Type: application/json');
+    debugPrint('   Body (JSON): $bodyJson');
+    debugPrint('   Body (Map): $body');
+
+    final response = await post<OtpResponse>(
+      ApiEndpoints.forgetPassword,
       body: body,
       fromJson: (json) => OtpResponse.fromJson(json),
     );
+
+    debugPrint('🌐 API Service - Forgot Password Response:');
+    debugPrint('   Success: ${response.success}');
+    debugPrint('   Message: ${response.message}');
+    debugPrint('   Has Data: ${response.data != null}');
+
+    return response;
   }
 
   // Verify OTP and Reset Password
@@ -205,11 +352,28 @@ class ApiService {
       'password': password,
     };
 
-    return await post<Map<String, dynamic>>(
-      '/auth/reset-password',
+    // Convert to JSON string to show exact format
+    final bodyJson = jsonEncode(body);
+    
+    debugPrint('🌐 API Service - Verify OTP & Reset Password Request:');
+    debugPrint('   Endpoint: ${AppConstants.baseUrl}${ApiEndpoints.resetPassword}');
+    debugPrint('   Method: POST');
+    debugPrint('   Content-Type: application/json');
+    debugPrint('   Body (JSON): $bodyJson');
+    debugPrint('   Body (Map): $body');
+
+    final response = await post<Map<String, dynamic>>(
+      ApiEndpoints.resetPassword,
       body: body,
       fromJson: (json) => json as Map<String, dynamic>,
     );
+
+    debugPrint('🌐 API Service - Verify OTP & Reset Password Response:');
+    debugPrint('   Success: ${response.success}');
+    debugPrint('   Message: ${response.message}');
+    debugPrint('   Has Data: ${response.data != null}');
+
+    return response;
   }
 
   // User Login
@@ -222,23 +386,64 @@ class ApiService {
       'password': password,
     };
 
+    // Convert to JSON string to show exact format
+    final bodyJson = jsonEncode(body);
+    
+    debugPrint('🌐 API Service - Login Request:');
+    debugPrint('   Endpoint: ${AppConstants.baseUrl}${ApiEndpoints.login}');
+    debugPrint('   Method: POST');
+    debugPrint('   Content-Type: application/json');
+    debugPrint('   Body (JSON): $bodyJson');
+    debugPrint('   Body (Map): $body');
+
     final response = await post<AuthResponse>(
-      '/auth/login',
+      ApiEndpoints.login,
       body: body,
       fromJson: (json) => AuthResponse.fromJson(json),
     );
 
-    // Store tokens if login is successful
+    debugPrint('🌐 API Service - Login Response:');
+    debugPrint('   Success: ${response.success}');
+    debugPrint('   Message: ${response.message}');
+    debugPrint('   Has Data: ${response.data != null}');
+
+    // Store tokens and user data if login is successful
     if (response.success && response.data != null) {
+      debugPrint('💾 Storing authentication data...');
+      
       if (response.data!.accessToken != null) {
         await _storageService.saveToken(response.data!.accessToken!);
+        debugPrint('   ✅ Access token saved');
       }
+      
       if (response.data!.refreshToken != null) {
         await _storageService.saveRefreshToken(response.data!.refreshToken!);
+        debugPrint('   ✅ Refresh token saved');
       }
+      
       if (response.data!.userId != null) {
         await _storageService.saveUserId(response.data!.userId!);
+        debugPrint('   ✅ User ID saved: ${response.data!.userId}');
       }
+      
+      // Store role if available
+      if (response.data!.role != null) {
+        await _storageService.saveString('user_role', response.data!.role!);
+        debugPrint('   ✅ Role saved: ${response.data!.role}');
+      }
+      
+      // Store user data as JSON string
+      if (response.data!.user != null) {
+        final userJson = jsonEncode(response.data!.user!.toJson());
+        await _storageService.saveString('user_data', userJson);
+        debugPrint('   ✅ User data saved');
+      }
+      
+      // Set logged in status
+      await _storageService.setLoggedIn(true);
+      debugPrint('   ✅ Login status set to true');
+    } else {
+      debugPrint('❌ Login failed - data not stored');
     }
 
     return response;

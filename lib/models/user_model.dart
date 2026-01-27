@@ -18,18 +18,51 @@ class UserModel {
   });
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    // Safely extract string values
+    String getStringValue(dynamic value, [String defaultValue = '']) {
+      if (value == null) return defaultValue;
+      if (value is String) return value;
+      return value.toString();
+    }
+    
+    // Safely parse DateTime
+    DateTime? parseDateTime(dynamic value) {
+      if (value == null) return null;
+      try {
+        if (value is String) {
+          return DateTime.parse(value);
+        } else if (value is DateTime) {
+          return value;
+        } else if (value is int) {
+          // Handle timestamp
+          return DateTime.fromMillisecondsSinceEpoch(value);
+        }
+      } catch (e) {
+        // If parsing fails, return null
+        return null;
+      }
+      return null;
+    }
+    
+    // Extract ID from various possible fields
+    String extractId() {
+      if (json['_id'] != null) {
+        return getStringValue(json['_id']);
+      }
+      if (json['id'] != null) {
+        return getStringValue(json['id']);
+      }
+      return '';
+    }
+    
     return UserModel(
-      id: json['id'] ?? json['_id'] ?? '',
-      name: json['name'] ?? '',
-      email: json['email'] ?? '',
-      phone: json['phone'],
-      avatar: json['avatar'],
-      createdAt: json['createdAt'] != null
-          ? DateTime.parse(json['createdAt'])
-          : null,
-      updatedAt: json['updatedAt'] != null
-          ? DateTime.parse(json['updatedAt'])
-          : null,
+      id: extractId(),
+      name: getStringValue(json['name']),
+      email: getStringValue(json['email']),
+      phone: json['phone'] != null ? getStringValue(json['phone']) : null,
+      avatar: json['avatar'] != null ? getStringValue(json['avatar']) : null,
+      createdAt: parseDateTime(json['createdAt']),
+      updatedAt: parseDateTime(json['updatedAt']),
     );
   }
 

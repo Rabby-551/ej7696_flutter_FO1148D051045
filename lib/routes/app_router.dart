@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../views/screens/splash_screen.dart';
 import '../views/screens/login_screen.dart';
 import '../views/screens/home_screen.dart';
@@ -10,10 +9,9 @@ import '../views/screens/forget_password_screen.dart';
 import '../views/screens/verify_otp_screen.dart';
 import '../views/screens/reset_password_screen.dart';
 
-final routerProvider = Provider<GoRouter>((ref) {
-
+GoRouter getRouter() {
   return GoRouter(
-    initialLocation: '/onboarding',
+    initialLocation: '/splash',
     redirect: (context, state) {
 
 
@@ -97,4 +95,4 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
     ),
   );
-});
+}

@@ -1,32 +1,32 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:get/get.dart';
 import 'utils/app_theme.dart';
 import 'routes/app_router.dart';
 import 'controllers/theme_controller.dart';
 
+final _router = getRouter();
+
 void main() {
-  runApp(
-    const ProviderScope(
-      child: MyApp(),
-    ),
-  );
+  // Initialize GetX
+  Get.put(ThemeController());
+  
+  runApp(const MyApp());
 }
 
-class MyApp extends ConsumerWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final router = ref.watch(routerProvider);
-    final isDarkMode = ref.watch(themeControllerProvider);
+  Widget build(BuildContext context) {
+    final themeController = Get.find<ThemeController>();
 
-    return MaterialApp.router(
+    return Obx(() => MaterialApp.router(
       title: 'EJ Flutter App',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      routerConfig: router,
-    );
+      themeMode: themeController.isDarkMode ? ThemeMode.dark : ThemeMode.light,
+      routerConfig: _router,
+    ));
   }
 }

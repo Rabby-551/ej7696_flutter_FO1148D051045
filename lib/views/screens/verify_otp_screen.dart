@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../utils/app_colors.dart';
+import '../../services/api_service.dart';
 import '../widgets/gradient_background.dart';
 import '../widgets/app_logo_header.dart';
 import '../widgets/otp_input_field.dart';
 import '../widgets/primary_button.dart';
+import '../widgets/custom_text_field.dart';
 
-class VerifyOtpScreen extends ConsumerStatefulWidget {
+class VerifyOtpScreen extends StatefulWidget {
   final String? email;
   final bool isForPasswordReset;
 
@@ -18,10 +19,171 @@ class VerifyOtpScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<VerifyOtpScreen> createState() => _VerifyOtpScreenState();
+  State<VerifyOtpScreen> createState() => _VerifyOtpScreenState();
 }
 
-class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
+class _VerifyOtpScreenState extends State<VerifyOtpScreen> {
+  final _apiService = ApiService();
+  final _otpController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _confirmPasswordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  bool _isLoading = false;
+  String _otp = '';
+
+  @override
+  void dispose() {
+    _otpController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleVerifyOtp() async {
+    debugPrint('=== Verify OTP Started ===');
+    debugPrint('   Email: ${widget.email}');
+    debugPrint('   IsForPasswordReset: ${widget.isForPasswordReset}');
+    
+    if (widget.email == null || widget.email!.isEmpty) {
+      debugPrint('❌ Email is missing');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Email is required'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_otp.isEmpty || _otp.length != 6) {
+      debugPrint('❌ Invalid OTP');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid 6-digit OTP'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // If password reset, validate password fields
+    if (widget.isForPasswordReset) {
+      if (_passwordController.text.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please enter your new password'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (_passwordController.text.length < 8) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Password must be at least 8 characters'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      if (_passwordController.text != _confirmPasswordController.text) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Passwords do not match'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      if (widget.isForPasswordReset) {
+        debugPrint('🔄 Calling API: /api/v1/auth/reset-password');
+        debugPrint('📤 Request Data:');
+        debugPrint('   Email: ${widget.email}');
+        debugPrint('   OTP: $_otp');
+        debugPrint('   Password: ${_passwordController.text.length} characters');
+
+        final response = await _apiService.verifyOtp(
+          email: widget.email!,
+          otp: _otp,
+          password: _passwordController.text,
+        );
+
+        setState(() {
+          _isLoading = false;
+        });
+
+        debugPrint('📥 API Response Received:');
+        debugPrint('   Success: ${response.success}');
+        debugPrint('   Message: ${response.message}');
+        debugPrint('   Data: ${response.data}');
+        debugPrint('   Error: ${response.error}');
+
+        if (response.success) {
+          debugPrint('✅ Password reset successfully!');
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response.message ?? 'Password reset successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          
+          // Navigate to login screen
+          if (context.mounted) {
+            debugPrint('🔄 Navigating to login screen...');
+            context.go('/login');
+          }
+        } else {
+          debugPrint('❌ Password reset failed');
+          debugPrint('   Error Message: ${response.message}');
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response.message ?? 'Failed to reset password. Please try again.'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+      } else {
+        // Handle regular OTP verification (for email verification)
+        debugPrint('⚠️ Regular OTP verification not implemented yet');
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      setState(() {
+        _isLoading = false;
+      });
+      
+      debugPrint('❌ Exception occurred during OTP verification:');
+      debugPrint('   Error: $e');
+      debugPrint('   Stack Trace: $stackTrace');
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('An error occurred: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+    
+    debugPrint('=== Verify OTP Completed ===');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +196,34 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 40),
+                const SizedBox(height: 20),
+                
+                // Back Button
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: IconButton(
+                    icon: const Icon(
+                      Icons.arrow_back,
+                      color: AppColors.textPrimary,
+                    ),
+                    onPressed: () {
+                      if (Navigator.canPop(context)) {
+                        Navigator.pop(context);
+                      } else {
+                        // If coming from password reset flow, go to forget password
+                        if (widget.isForPasswordReset) {
+                          context.go('/forget-password');
+                        } else {
+                          context.go('/login');
+                        }
+                      }
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
+                
+                const SizedBox(height: 20),
 
                 // Logo and App Name
                 const AppLogoHeader(),
@@ -58,12 +247,91 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
                 OtpInputField(
                   length: 6,
                   onChanged: (value) {
-                  
+                    setState(() {
+                      _otp = value;
+                    });
                   },
                   onCompleted: (value) {
-          
+                    setState(() {
+                      _otp = value;
+                    });
+                    // Auto-submit if password reset and password is entered
+                    if (widget.isForPasswordReset && 
+                        _passwordController.text.isNotEmpty &&
+                        _confirmPasswordController.text.isNotEmpty) {
+                      _handleVerifyOtp();
+                    }
                   },
                 ),
+
+                // Password fields (only for password reset)
+                if (widget.isForPasswordReset) ...[
+                  const SizedBox(height: 24),
+                  
+                  // New Password Field
+                  CustomTextField(
+                    label: 'New Password',
+                    hint: 'Enter your new password',
+                    prefixIcon: Icons.lock_outline,
+                    controller: _passwordController,
+                    obscureText: _obscurePassword,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your password';
+                      }
+                      if (value.length < 8) {
+                        return 'Password must be at least 8 characters';
+                      }
+                      return null;
+                    },
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // Confirm Password Field
+                  CustomTextField(
+                    label: 'Confirm Password',
+                    hint: 'Confirm your new password',
+                    prefixIcon: Icons.lock_outline,
+                    controller: _confirmPasswordController,
+                    obscureText: _obscureConfirmPassword,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please confirm your password';
+                      }
+                      if (value != _passwordController.text) {
+                        return 'Passwords do not match';
+                      }
+                      return null;
+                    },
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureConfirmPassword = !_obscureConfirmPassword;
+                        });
+                      },
+                    ),
+                  ),
+                ],
 
                 const SizedBox(height: 24),
 
@@ -97,10 +365,9 @@ class _VerifyOtpScreenState extends ConsumerState<VerifyOtpScreen> {
 
                 // Verify Now Button
                 PrimaryButton(
-                  text: 'Verify Now',
-                  onPressed:() async {
-                  },
-                  isLoading: false,
+                  text: widget.isForPasswordReset ? 'Reset Password' : 'Verify Now',
+                  onPressed: _isLoading ? null : _handleVerifyOtp,
+                  isLoading: _isLoading,
                   useGradient: true,
                   borderRadius: 30,
                 ),
