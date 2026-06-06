@@ -36,25 +36,8 @@ class EbookService {
     );
   }
 
-  Future<ApiResponse<Map<String, dynamic>>> createStripePaymentIntent({
-    required String productId,
-  }) {
-    return _apiService.post<Map<String, dynamic>>(
-      ApiEndpoints.resourcePurchaseStripeCreate,
-      body: {'productId': productId},
-      fromJson: (json) => _asMap(json),
-    );
-  }
-
-  Future<ApiResponse<Map<String, dynamic>>> confirmStripePayment({
-    required String paymentIntentId,
-  }) {
-    return _apiService.post<Map<String, dynamic>>(
-      ApiEndpoints.resourcePurchaseStripeConfirm,
-      body: {'paymentIntentId': paymentIntentId},
-      fromJson: (json) => _asMap(json),
-    );
-  }
+  // STRIPE_DISABLED: createStripePaymentIntent removed.
+  // STRIPE_DISABLED: confirmStripePayment removed.
 
   Future<ApiResponse<EbookPurchasedContent>> getPurchasedContent({
     required String productId,

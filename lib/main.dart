@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
+// STRIPE_DISABLED: import 'package:flutter_stripe/flutter_stripe.dart';
 import 'utils/app_theme.dart';
-import 'utils/app_constants.dart';
+// STRIPE_DISABLED: import 'utils/app_constants.dart';
 import 'routes/app_router.dart';
 import 'services/installation_id_service.dart';
 import 'services/app_link_service.dart';
+import 'services/apple_iap_service.dart';
 import 'controllers/auth_controller.dart';
 import 'controllers/quiz_voice_controller.dart';
 import 'controllers/splash_controller.dart';
@@ -16,10 +17,13 @@ final _router = getRouter();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  Stripe.publishableKey = AppConstants.stripePublishableKey;
-  // Return URL scheme for 3DS / redirect-based payment methods (Android & iOS)
-  Stripe.urlScheme = 'flutterstripe';
-  await Stripe.instance.applySettings();
+  // STRIPE_DISABLED:
+  // Stripe.publishableKey = AppConstants.stripePublishableKey;
+  // Stripe.urlScheme = 'flutterstripe';
+  // await Stripe.instance.applySettings();
+
+  // Initialize Apple In-App Purchases
+  await AppleIAPService().initialize();
 
   // Ensure installation identifier exists before any API/auth actions.
   await InstallationIdService().getOrCreateInstallationId();

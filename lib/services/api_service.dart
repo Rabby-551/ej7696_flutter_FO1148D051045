@@ -734,17 +734,25 @@ class ApiService {
     );
   }
 
-  /// Create Stripe Payment Intent for a professional plan upgrade.
-  /// POST {{base_url}}/api/v1/payments/plan/professional/stripe/create
+  /// Confirm Apple IAP purchase for professional plan upgrade.
+  /// POST {{base_url}}/api/v1/payments/plan/professional/apple/confirm
   Future<ApiResponse<Map<String, dynamic>>>
-  createProfessionalPlanStripePaymentIntent(
-    String examId, {
+  confirmProfessionalPlanApplePayment({
+    required String receiptData,
+    required String productId,
+    required String examId,
+    String? transactionId,
     List<String>? addonProductIds,
     List<String>? addonProductCodes,
-    String? addonProductId,
-    String? addonProductCode,
   }) async {
-    final body = <String, dynamic>{'examId': examId};
+    final body = <String, dynamic>{
+      'receiptData': receiptData,
+      'productId': productId,
+      'examId': examId,
+    };
+    if (transactionId != null && transactionId.trim().isNotEmpty) {
+      body['transactionId'] = transactionId.trim();
+    }
     final normalizedAddonProductIds = (addonProductIds ?? const [])
         .map((id) => id.trim())
         .where((id) => id.isNotEmpty)
@@ -761,15 +769,8 @@ class ApiService {
     if (normalizedAddonProductCodes.isNotEmpty) {
       body['addonProductCodes'] = normalizedAddonProductCodes;
     }
-    if (addonProductId != null && addonProductId.trim().isNotEmpty) {
-      body['addonProductId'] = addonProductId.trim();
-    }
-    if (addonProductCode != null && addonProductCode.trim().isNotEmpty) {
-      body['addonProductCode'] = addonProductCode.trim();
-    }
-
     return post<Map<String, dynamic>>(
-      ApiEndpoints.professionalPlanStripeCreate(),
+      ApiEndpoints.professionalPlanAppleConfirm(),
       body: body,
       fromJson: (json) => json is Map<String, dynamic>
           ? json
@@ -777,73 +778,10 @@ class ApiService {
     );
   }
 
-  /// Confirm Stripe payment after PaymentSheet success.
-  /// POST {{base_url}}/api/v1/payments/plan/professional/stripe/confirm
-  Future<ApiResponse<Map<String, dynamic>>>
-  confirmProfessionalPlanStripePayment(String paymentIntentId) async {
-    return post<Map<String, dynamic>>(
-      ApiEndpoints.professionalPlanStripeConfirm(),
-      body: {'paymentIntentId': paymentIntentId},
-      fromJson: (json) => json is Map<String, dynamic>
-          ? json
-          : Map<String, dynamic>.from(json as Map),
-    );
-  }
-
-  /// Create Stripe Payment Intent for exam unlock. POST {{base_url}}/api/v1/payments/exam/:examId/stripe/create
-  Future<ApiResponse<Map<String, dynamic>>> createExamStripePaymentIntent(
-    String examId, {
-    List<String>? addonProductIds,
-    List<String>? addonProductCodes,
-    String? addonProductId,
-    String? addonProductCode,
-  }) async {
-    final body = <String, dynamic>{};
-    final normalizedAddonProductIds = (addonProductIds ?? const [])
-        .map((id) => id.trim())
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-    final normalizedAddonProductCodes = (addonProductCodes ?? const [])
-        .map((code) => code.trim())
-        .where((code) => code.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-    if (normalizedAddonProductIds.isNotEmpty) {
-      body['addonProductIds'] = normalizedAddonProductIds;
-    }
-    if (normalizedAddonProductCodes.isNotEmpty) {
-      body['addonProductCodes'] = normalizedAddonProductCodes;
-    }
-    if (addonProductId != null && addonProductId.trim().isNotEmpty) {
-      body['addonProductId'] = addonProductId.trim();
-    }
-    if (addonProductCode != null && addonProductCode.trim().isNotEmpty) {
-      body['addonProductCode'] = addonProductCode.trim();
-    }
-
-    return post<Map<String, dynamic>>(
-      ApiEndpoints.examStripeCreate(examId),
-      body: body.isEmpty ? null : body,
-      fromJson: (json) => json is Map<String, dynamic>
-          ? json
-          : Map<String, dynamic>.from(json as Map),
-    );
-  }
-
-  /// Confirm Stripe payment after PaymentSheet success. POST {{base_url}}/api/v1/payments/exam/:examId/stripe/confirm
-  Future<ApiResponse<Map<String, dynamic>>> confirmExamStripePayment(
-    String examId,
-    String paymentIntentId,
-  ) async {
-    return post<Map<String, dynamic>>(
-      ApiEndpoints.examStripeConfirm(examId),
-      body: {'paymentIntentId': paymentIntentId},
-      fromJson: (json) => json is Map<String, dynamic>
-          ? json
-          : Map<String, dynamic>.from(json as Map),
-    );
-  }
+  // STRIPE_DISABLED: createProfessionalPlanStripePaymentIntent removed.
+  // STRIPE_DISABLED: confirmProfessionalPlanStripePayment removed.
+  // STRIPE_DISABLED: createExamStripePaymentIntent removed.
+  // STRIPE_DISABLED: confirmExamStripePayment removed.
 
   /// Create support ticket (Help & Support). POST {{base_url}}/api/v1/support
   /// Requires auth. Optional attachment field name is "attachment".

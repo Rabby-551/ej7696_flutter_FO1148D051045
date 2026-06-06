@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
+// STRIPE_DISABLED: import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:get/get.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,6 +12,7 @@ import '../../models/plan_tier.dart';
 import '../../models/professional_plan_model.dart';
 import '../../models/referral_model.dart';
 import '../../services/api_service.dart';
+import '../../services/apple_iap_service.dart';
 import '../../services/exam_service.dart';
 import '../../services/storage_service.dart';
 import '../widgets/app_shimmer.dart';
@@ -69,85 +70,6 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
     if (value is num) return value;
     if (value == null) return null;
     return num.tryParse(value.toString());
-  }
-
-  num _roundCheckoutAmount(num value) {
-    return (value * 100).round() / 100;
-  }
-
-  String _normalizeAddonSelection(String? value) {
-    return value?.trim().toLowerCase() ?? '';
-  }
-
-  List<String> _normalizeAddonSelections(List<String>? values) {
-    return (values ?? const [])
-        .map(_normalizeAddonSelection)
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .toList(growable: false);
-  }
-
-  bool _didServerMissSelectedAddon({
-    required Map<String, dynamic> paymentData,
-    required List<String> addonProductIds,
-    required List<String> addonProductCodes,
-    required num? expectedTotalAmount,
-  }) {
-    final normalizedAddonProductIds = _normalizeAddonSelections(
-      addonProductIds,
-    );
-    final normalizedAddonProductCodes = _normalizeAddonSelections(
-      addonProductCodes,
-    );
-    final hasAddonSelection =
-        normalizedAddonProductIds.isNotEmpty ||
-        normalizedAddonProductCodes.isNotEmpty;
-    if (!hasAddonSelection) return false;
-
-    final breakdownRaw = paymentData['breakdown'];
-    final breakdown = breakdownRaw is Map<String, dynamic>
-        ? breakdownRaw
-        : (breakdownRaw is Map
-              ? Map<String, dynamic>.from(breakdownRaw)
-              : const <String, dynamic>{});
-
-    final returnedAddonProductCodes = <String>[
-      ..._normalizeAddonSelections(
-        (breakdown['addonProductCodes'] as List<dynamic>?)
-            ?.map((item) => item.toString())
-            .toList(),
-      ),
-      ..._normalizeAddonSelections(
-        (paymentData['addonProductCodes'] as List<dynamic>?)
-            ?.map((item) => item.toString())
-            .toList(),
-      ),
-      _normalizeAddonSelection(
-        breakdown['addonProductCode']?.toString() ??
-            paymentData['addonProductCode']?.toString(),
-      ),
-    ].where((value) => value.isNotEmpty).toSet().toList(growable: false);
-    final addonFinalPrice = _parseCheckoutAmount(breakdown['addonFinalPrice']);
-    final returnedTotalAmount =
-        _parseCheckoutAmount(breakdown['totalAmount']) ??
-        _parseCheckoutAmount(paymentData['amount']) ??
-        0;
-
-    final selectionMatched = normalizedAddonProductCodes.isNotEmpty
-        ? normalizedAddonProductCodes.every(
-                returnedAddonProductCodes.contains,
-              ) &&
-              returnedAddonProductCodes.length ==
-                  normalizedAddonProductCodes.length
-        : returnedAddonProductCodes.length == normalizedAddonProductIds.length;
-
-    if (!selectionMatched && (addonFinalPrice ?? 0) <= 0) {
-      return true;
-    }
-
-    if (expectedTotalAmount == null) return false;
-    return _roundCheckoutAmount(returnedTotalAmount) !=
-        _roundCheckoutAmount(expectedTotalAmount);
   }
 
   Future<bool> _ensureCheckoutSession() async {
@@ -487,18 +409,13 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
         showReferralDiscount: false,
       );
       if (!mounted || selection == null) return;
-      await _payForExamUnlockWithStripe(
-        result.exam,
-        addonProductIds: selection.addonProductIds,
-        addonProductCodes: selection.addonProductCodes,
-        expectedTotalAmount: selection.expectedTotalAmount,
-      );
+      await _payForExamUnlockWithAppleIAP(result.exam);
     } else {
       final selection = await _showUpgradeAddOnSelectionDialog(
         showReferralDiscount: true,
       );
       if (!mounted || selection == null) return;
-      await _payForProfessionalUpgradeWithStripe(
+      await _payForProfessionalUpgradeWithAppleIAP(
         result.exam,
         addonProductIds: selection.addonProductIds,
         addonProductCodes: selection.addonProductCodes,
@@ -543,7 +460,7 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
     );
   }
 
-  Future<void> _payForProfessionalUpgradeWithStripe(
+  Future<void> _payForProfessionalUpgradeWithAppleIAP(
     ExamModel exam, {
     List<String> addonProductIds = const [],
     List<String> addonProductCodes = const [],
@@ -555,73 +472,46 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
     setState(() => _isPaymentLoading = true);
 
     try {
-      final createRes = await _apiService
-          .createProfessionalPlanStripePaymentIntent(
-            examId,
-            addonProductIds: addonProductIds,
-            addonProductCodes: addonProductCodes,
-          );
-      if (!mounted) return;
-      if (!createRes.success || createRes.data == null) {
-        setState(() => _isPaymentLoading = false);
-        if (_handleCheckoutUnauthorized(createRes)) return;
-        ErrorHandler.showFromResponse(
-          createRes,
-          context: context,
-          failureFallback: 'Failed to create payment',
-        );
-        return;
-      }
+      final iapService = AppleIAPService();
 
-      final clientSecret = createRes.data!['clientSecret'] as String?;
-      final paymentIntentId = createRes.data!['paymentIntentId'] as String?;
-      if (clientSecret == null ||
-          clientSecret.isEmpty ||
-          paymentIntentId == null) {
+      // Load the subscription product from the App Store.
+      final product = await iapService.loadSubscriptionProduct();
+      if (!mounted) return;
+
+      if (product == null) {
         setState(() => _isPaymentLoading = false);
         ErrorHandler.showSnackBar(
-          'Invalid payment response',
+          'Subscription is not available right now. Please try again later.',
           isError: true,
           context: context,
         );
         return;
       }
-      final num amountPaid =
-          _parseCheckoutAmount(createRes.data!['amount']) ?? 180;
-      if (_didServerMissSelectedAddon(
-        paymentData: createRes.data!,
+
+      // Present the native App Store payment sheet.
+      final purchaseDetails = await iapService.purchase(product);
+      if (!mounted) return;
+
+      // Send the App Store receipt to the backend for verification.
+      final receiptData =
+          purchaseDetails.verificationData.serverVerificationData;
+      final confirmRes = await _apiService.confirmProfessionalPlanApplePayment(
+        receiptData: receiptData,
+        productId: AppleIAPService.kSixMonthSubscriptionId,
+        transactionId: purchaseDetails.purchaseID,
+        examId: examId,
         addonProductIds: addonProductIds,
         addonProductCodes: addonProductCodes,
-        expectedTotalAmount: expectedTotalAmount,
-      )) {
-        setState(() => _isPaymentLoading = false);
-        ErrorHandler.showSnackBar(
-          'The payment server returned plan-only pricing. Deploy the updated backend, then try again.',
-          isError: true,
-          context: context,
-        );
-        return;
-      }
-
-      await Stripe.instance.initPaymentSheet(
-        paymentSheetParameters: SetupPaymentSheetParameters(
-          paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'EJ Exam Access',
-          returnURL: 'flutterstripe://redirect',
-        ),
-      );
-      if (!mounted) return;
-
-      await Stripe.instance.presentPaymentSheet();
-      if (!mounted) return;
-
-      final confirmRes = await _apiService.confirmProfessionalPlanStripePayment(
-        paymentIntentId,
       );
       if (!mounted) return;
       setState(() => _isPaymentLoading = false);
 
       if (confirmRes.success) {
+        final num amountPaid =
+            _parseCheckoutAmount(confirmRes.data?['amount']) ??
+            expectedTotalAmount ??
+            professionalPlan?.price ??
+            180;
         final PaymentSuccessDetails paymentDetails =
             PaymentSuccessDetails.fromPayload(
               confirmRes.data,
@@ -629,7 +519,7 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
               fallbackAmount: amountPaid,
               fallbackTitle: professionalPlan?.name ?? 'Professional Plan',
               fallbackCurrency:
-                  (createRes.data?['currency']?.toString() ??
+                  (confirmRes.data?['currency']?.toString() ??
                           professionalPlan?.currency ??
                           'USD')
                       .toUpperCase(),
@@ -639,9 +529,9 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
               fallbackNextBillingDate:
                   _userController.user.value?.subscriptionExpiresAt ??
                   professionalPlan?.subscription?.nextBillingDate,
-              fallbackPaymentMethodLabel: 'Card',
+              fallbackPaymentMethodLabel: 'Apple Pay',
               fallbackPaidAt: DateTime.now(),
-              fallbackProvider: 'stripe',
+              fallbackProvider: 'apple',
               fallbackSubscriptionStartedAt:
                   _userController.user.value?.subscriptionStartedAt,
               fallbackStatus: 'successful',
@@ -664,22 +554,20 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
                 PaymentSuccessDetails.fromPayload(
                   confirmRes.data,
                   purchaseType: 'plan',
-                  fallbackAmount: amountPaid,
+                  fallbackAmount: expectedTotalAmount ??
+                      professionalPlan?.price ?? 180,
                   fallbackTitle: professionalPlan?.name ?? 'Professional Plan',
                   fallbackCurrency:
-                      (createRes.data?['currency']?.toString() ??
-                              professionalPlan?.currency ??
-                              'USD')
-                          .toUpperCase(),
+                      (professionalPlan?.currency ?? 'USD').toUpperCase(),
                   fallbackBillingCycleLabel:
                       professionalPlan?.subscription?.billingCycle?.label ??
                       professionalPlan?.interval.label,
                   fallbackNextBillingDate:
                       _userController.user.value?.subscriptionExpiresAt ??
                       professionalPlan?.subscription?.nextBillingDate,
-                  fallbackPaymentMethodLabel: 'Card',
+                  fallbackPaymentMethodLabel: 'Apple Pay',
                   fallbackPaidAt: DateTime.now(),
-                  fallbackProvider: 'stripe',
+                  fallbackProvider: 'apple',
                   fallbackSubscriptionStartedAt:
                       _userController.user.value?.subscriptionStartedAt,
                   fallbackStatus: 'successful',
@@ -691,9 +579,8 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
             );
             return;
           }
-
           ErrorHandler.showSnackBar(
-            'Payment appears to have succeeded, but the server reported a duplicate purchase record. Please refresh once, and if your plan is still not upgraded contact support with your payment reference.',
+            'Payment appears to have succeeded, but the server reported a duplicate purchase. Please refresh — if your plan is not upgraded, contact support.',
             isError: true,
             context: context,
           );
@@ -705,11 +592,12 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
           failureFallback: 'Failed to confirm payment',
         );
       }
-    } on StripeException catch (e) {
+    } on IAPException catch (e) {
       if (!mounted) return;
       setState(() => _isPaymentLoading = false);
+      if (e.cancelled) return; // User cancelled — no error shown.
       ErrorHandler.showSnackBar(
-        e.error.message ?? 'Payment was cancelled or failed.',
+        e.message,
         isError: true,
         context: context,
       );
@@ -724,176 +612,28 @@ class _SubscribeScreenState extends State<SubscribeScreen> {
     }
   }
 
-  Future<void> _payForExamUnlockWithStripe(
-    ExamModel exam, {
-    List<String> addonProductIds = const [],
-    List<String> addonProductCodes = const [],
-    num? expectedTotalAmount,
-  }) async {
-    if (!await _ensureCheckoutSession()) return;
-
-    final examId = exam.id;
-    setState(() => _isPaymentLoading = true);
-
-    try {
-      final createRes = await _apiService.createExamStripePaymentIntent(
-        examId,
-        addonProductIds: addonProductIds,
-        addonProductCodes: addonProductCodes,
-      );
-      if (!mounted) return;
-      if (!createRes.success || createRes.data == null) {
-        setState(() => _isPaymentLoading = false);
-        if (_handleCheckoutUnauthorized(createRes)) return;
-        ErrorHandler.showFromResponse(
-          createRes,
-          context: context,
-          failureFallback: 'Failed to create payment',
-        );
-        return;
-      }
-
-      final bool alreadyUnlocked =
-          createRes.data?['unlocked'] == true ||
-          createRes.data?['alreadyUnlocked'] == true;
-      if (alreadyUnlocked) {
-        setState(() => _isPaymentLoading = false);
-        await _userController.addUnlockedExamId(examId);
-        await _userController.refreshProfile();
-        if (!mounted) return;
-        context.push(
-          '/quiz-settings',
-          extra: {
-            'courseTitle': exam.name,
-            'examId': exam.id,
-            'questionCount': exam.questionCount,
-            'effectivitySheetContent': exam.effectivitySheetContent,
-            'bodyOfKnowledgeContent': exam.bodyOfKnowledgeContent,
-          },
-        );
-        return;
-      }
-
-      final clientSecret = createRes.data!['clientSecret'] as String?;
-      final paymentIntentId = createRes.data!['paymentIntentId'] as String?;
-      if (clientSecret == null ||
-          clientSecret.isEmpty ||
-          paymentIntentId == null) {
-        setState(() => _isPaymentLoading = false);
-        ErrorHandler.showSnackBar(
-          'Invalid payment response',
-          isError: true,
-          context: context,
-        );
-        return;
-      }
-
-      final num fallbackAmount = professionalPlan?.unlockExamPrice ?? 150;
-      final num amountPaid =
-          _parseCheckoutAmount(createRes.data!['amount']) ?? fallbackAmount;
-      if (_didServerMissSelectedAddon(
-        paymentData: createRes.data!,
-        addonProductIds: addonProductIds,
-        addonProductCodes: addonProductCodes,
-        expectedTotalAmount: expectedTotalAmount,
-      )) {
-        setState(() => _isPaymentLoading = false);
-        ErrorHandler.showSnackBar(
-          'The payment server returned exam-only pricing. Deploy the updated backend, then try again.',
-          isError: true,
-          context: context,
-        );
-        return;
-      }
-
-      await Stripe.instance.initPaymentSheet(
-        paymentSheetParameters: SetupPaymentSheetParameters(
-          paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'EJ Exam Access',
-          returnURL: 'flutterstripe://redirect',
+  Future<void> _payForExamUnlockWithAppleIAP(ExamModel exam) async {
+    // Individual exam unlocks require a separate consumable IAP product.
+    // That product is not yet configured in App Store Connect.
+    // Until it is available, direct users to manage their subscription.
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Additional Exam Unlock'),
+        content: const Text(
+          'Individual exam unlocks are managed through your active subscription. '
+          'Your subscription already includes access to your selected exam. '
+          'To unlock additional exams, please contact support.',
         ),
-      );
-      if (!mounted) return;
-
-      await Stripe.instance.presentPaymentSheet();
-      if (!mounted) return;
-
-      final confirmRes = await _apiService.confirmExamStripePayment(
-        examId,
-        paymentIntentId,
-      );
-      if (!mounted) return;
-      setState(() => _isPaymentLoading = false);
-
-      if (confirmRes.success) {
-        await _userController.addUnlockedExamId(examId);
-        await _userController.refreshProfile();
-        await _loadProfessionalPlan();
-        if (!mounted) return;
-        final DateTime fallbackPaidAt = DateTime.now();
-        final DateTime fallbackExamExpiresAt = DateTime(
-          fallbackPaidAt.year,
-          fallbackPaidAt.month + 3,
-          fallbackPaidAt.day,
-          fallbackPaidAt.hour,
-          fallbackPaidAt.minute,
-          fallbackPaidAt.second,
-          fallbackPaidAt.millisecond,
-          fallbackPaidAt.microsecond,
-        );
-        final PaymentSuccessDetails paymentDetails =
-            PaymentSuccessDetails.fromPayload(
-              confirmRes.data,
-              purchaseType: 'exam',
-              fallbackAmount: amountPaid,
-              fallbackTitle: exam.name,
-              fallbackCurrency:
-                  (createRes.data?['currency']?.toString() ?? 'USD')
-                      .toUpperCase(),
-              fallbackUnlockDurationLabel: '3 months',
-              fallbackExpiresAt: fallbackExamExpiresAt,
-              fallbackExpiryMonths: 3,
-              fallbackPaymentMethodLabel: 'Card',
-              fallbackPaidAt: fallbackPaidAt,
-              fallbackProvider: 'stripe',
-              fallbackStatus: 'successful',
-            );
-        context.push(
-          '/exam-unlock-success',
-          extra: {
-            'courseTitle': exam.name,
-            'examId': examId,
-            'questionCount': exam.questionCount,
-            'effectivitySheetContent': exam.effectivitySheetContent,
-            'bodyOfKnowledgeContent': exam.bodyOfKnowledgeContent,
-            'paymentSummary': paymentDetails.toJson(),
-          },
-        );
-      } else {
-        if (_handleCheckoutUnauthorized(confirmRes)) return;
-        ErrorHandler.showFromResponse(
-          confirmRes,
-          context: context,
-          failureFallback: 'Failed to confirm payment',
-        );
-      }
-    } on StripeException catch (e) {
-      if (!mounted) return;
-      setState(() => _isPaymentLoading = false);
-      ErrorHandler.showSnackBar(
-        e.error.message ?? 'Payment was cancelled or failed.',
-        isError: true,
-        context: context,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isPaymentLoading = false);
-      ErrorHandler.showFromException(
-        e,
-        context: context,
-        fallback: 'Payment failed. Please try again.',
-      );
-    }
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildPlanCard({

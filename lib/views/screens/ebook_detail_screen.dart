@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_stripe/flutter_stripe.dart';
+// STRIPE_DISABLED: import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../../core/error/error_handler.dart';
 import '../../models/ebook_store_model.dart';
@@ -45,7 +45,7 @@ class _EbookDetailScreenState extends State<EbookDetailScreen> {
   EbookStoreData? _store;
   EbookProduct? _product;
   String _productId = '';
-  bool _isBuying = false;
+  // false removed — no active purchase flow (Stripe disabled, Apple IAP products pending).
 
   @override
   void initState() {
@@ -416,107 +416,27 @@ class _EbookDetailScreenState extends State<EbookDetailScreen> {
     );
   }
 
-  Future<void> _buyWithStripe(EbookProduct product) async {
-    if (_isBuying) return;
-    setState(() => _isBuying = true);
-
-    try {
-      final createRes = await _ebookService.createStripePaymentIntent(
-        productId: product.id,
-      );
-
-      if (!mounted) return;
-
-      if (!createRes.success || createRes.data == null) {
-        setState(() => _isBuying = false);
-        ErrorHandler.showFromResponse(
-          createRes,
-          context: context,
-          failureFallback: 'Unable to start payment.',
-        );
-        return;
-      }
-
-      final data = createRes.data!;
-      if (data['unlocked'] == true) {
-        setState(() => _isBuying = false);
-        await _loadData();
-        await _openReader(product);
-        return;
-      }
-
-      final clientSecret = data['clientSecret']?.toString() ?? '';
-      final paymentIntentId = data['paymentIntentId']?.toString() ?? '';
-      if (clientSecret.isEmpty || paymentIntentId.isEmpty) {
-        setState(() => _isBuying = false);
-        ErrorHandler.showSnackBar(
-          'Invalid payment response from server.',
-          isError: true,
-          context: context,
-        );
-        return;
-      }
-
-      await Stripe.instance.initPaymentSheet(
-        paymentSheetParameters: SetupPaymentSheetParameters(
-          paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'EJ Resource Store',
-          returnURL: 'flutterstripe://redirect',
-        ),
-      );
-
-      if (!mounted) return;
-      await Stripe.instance.presentPaymentSheet();
-      if (!mounted) return;
-
-      final confirmRes = await _ebookService.confirmStripePayment(
-        paymentIntentId: paymentIntentId,
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _isBuying = false;
-      });
-
-      if (!confirmRes.success) {
-        ErrorHandler.showFromResponse(
-          confirmRes,
-          context: context,
-          failureFallback: 'Payment confirmation failed.',
-        );
-        return;
-      }
-
-      ErrorHandler.showSnackBar(
-        'Purchase completed. Resource unlocked.',
-        isError: false,
-        context: context,
-      );
-      await _loadData();
-      await _openReader(product);
-    } on StripeException catch (e) {
-      if (!mounted) return;
-      setState(() => _isBuying = false);
-      ErrorHandler.showSnackBar(
-        e.error.message ?? 'Payment cancelled or failed.',
-        isError: true,
-        context: context,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isBuying = false);
-      ErrorHandler.showFromException(
-        e,
-        context: context,
-        fallback: 'Payment failed. Please try again.',
-      );
-    }
-  }
-
   Future<void> _startCheckout(EbookProduct product) async {
-    final shouldContinue = await _showCheckoutSheet(product);
-    if (!mounted || shouldContinue != true) return;
-    await _buyWithStripe(product);
+    // STRIPE_DISABLED: resource purchases via Stripe have been removed.
+    // Apple IAP products for individual resources are not yet configured
+    // in App Store Connect. Show an informational dialog until they are set up.
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Purchase Not Available'),
+        content: const Text(
+          'Individual resource purchases are not available as in-app purchases yet. '
+          'Please contact support or check back later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -930,34 +850,23 @@ class _EbookDetailScreenState extends State<EbookDetailScreen> {
                   children: [
                     Expanded(
                       child: ElevatedButton.icon(
-                        onPressed: _isBuying
-                            ? null
-                            : product.isBundle
+                        onPressed: product.isBundle
                             ? isUnlocked
                                   ? null
                                   : () => _startCheckout(product)
                             : isUnlocked
                             ? () => _openReader(product)
                             : () => _startCheckout(product),
-                        icon: _isBuying
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Icon(
-                                product.isBundle
-                                    ? isUnlocked
-                                          ? Icons.collections_bookmark_rounded
-                                          : Icons.shopping_bag_outlined
-                                    : isUnlocked
-                                    ? Icons.menu_book_rounded
-                                    : Icons.shopping_bag_outlined,
-                                size: 18,
-                              ),
+                        icon: Icon(
+                          product.isBundle
+                              ? isUnlocked
+                                    ? Icons.collections_bookmark_rounded
+                                    : Icons.shopping_bag_outlined
+                              : isUnlocked
+                              ? Icons.menu_book_rounded
+                              : Icons.shopping_bag_outlined,
+                          size: 18,
+                        ),
                         label: Text(
                           product.isBundle
                               ? isUnlocked
